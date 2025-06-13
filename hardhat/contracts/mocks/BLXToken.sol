@@ -4,33 +4,27 @@ pragma solidity ^0.8.28;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract STRADAToken is ERC20, Ownable {
+contract BLXToken is ERC20, Ownable {
     uint256 public maxTxAmount;
     uint256 public cooldownTime = 60; // 60 seconds cooldown
     mapping(address => uint256) private lastTxTime;
-
-    // testing purpose
     mapping(address => bool) private _isExcludedFromCooldown;
-    mapping(address => bool) private _isExcludedFromMaxTx;
 
     constructor(
         uint256 initialSupply
-    ) Ownable(msg.sender) ERC20("STRADA Token", "STRADA") {
-        _mint(msg.sender, initialSupply);
-        maxTxAmount = initialSupply / 100; // 1% of initial supply (with decimals)
+    ) Ownable(msg.sender) ERC20("BLUME Token", "BLX") {
+        _mint(msg.sender, initialSupply * 10 ** decimals());
+        maxTxAmount = (initialSupply * 10 ** decimals()) / 100; // 1% maxTxAmount with decimals
 
-        // testing purpose
+        // Exclude deployer/owner from cooldown
         _isExcludedFromCooldown[msg.sender] = true;
-        _isExcludedFromMaxTx[msg.sender] = true;
     }
 
     modifier antiWhale(address sender, uint256 amount) {
-        if (!_isExcludedFromMaxTx[sender]) {
-            require(
-                amount <= maxTxAmount,
-                "STRADA: Transfer amount exceeds maxTxAmount"
-            );
-        }
+        require(
+            amount <= maxTxAmount,
+            "BLX: Transfer amount exceeds maxTxAmount"
+        );
         _;
     }
 
@@ -38,7 +32,7 @@ contract STRADAToken is ERC20, Ownable {
         if (!_isExcludedFromCooldown[sender]) {
             require(
                 block.timestamp - lastTxTime[sender] >= cooldownTime,
-                "STRADA: Please wait before making another transaction"
+                "BLX: Please wait before making another transaction"
             );
             _;
             lastTxTime[sender] = block.timestamp;

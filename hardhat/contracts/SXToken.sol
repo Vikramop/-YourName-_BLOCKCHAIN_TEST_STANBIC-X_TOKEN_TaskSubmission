@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IBLXToken {
     function transferFrom(
@@ -133,5 +133,9 @@ contract SXToken is ERC20, Ownable, ReentrancyGuard {
         bool excluded
     ) external onlyOwner {
         _isExcludedFromCooldown[account] = excluded;
+    }
+
+    function mint(address to, uint256 amount) external onlyOwner {
+        _mint(to, amount);
     }
 }

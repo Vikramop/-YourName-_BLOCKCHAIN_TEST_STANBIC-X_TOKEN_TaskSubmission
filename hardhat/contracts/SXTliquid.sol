@@ -2,34 +2,23 @@
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-interface ISXToken {
-    function transferFrom(
-        address sender,
-        address recipient,
-        uint256 amount
-    ) external returns (bool);
+contract StanbicXLiquidStaking is ERC20, ReentrancyGuard {
+    IERC20 public immutable sxtToken;
+    IERC20 public immutable rewardToken;
 
-    function transfer(
-        address recipient,
-        uint256 amount
-    ) external returns (bool);
-}
+    // Total SXT tokens staked (including rewards)
+    uint256 public totalSXTStaked;
 
-contract StanbicXLiquidStaking is ERC20, Ownable, ReentrancyGuard {
-    ISXToken public sxtToken;
+    // Reward tracking
+    uint256 public rewardPerTokenStored;
+    uint256 public lastUpdateTime;
+    uint256 public rewardRate;
 
-    uint256 public totalStaked; // Total SXT tokens staked
-    uint256 public rewardPerTokenStored; // Accumulated rewards per token
-    uint256 public lastUpdateTime; // Last timestamp rewards were updated
-    uint256 public rewardRate; // Reward tokens distributed per second
-
-    mapping(address => uint256) public userRewardPerTokenPaid; // User’s reward per token paid
-    mapping(address => uint256) public rewards; // Rewards accrued but not claimed
-
-    // Cooldown and anti-whale can be added similarly if needed
+    mapping(address => uint256) public userRewardPerTokenPaid;
+    mapping(address => uint256) public rewards;
 
     event Staked(address indexed user, uint256 amount);
     event Unstaked(address indexed user, uint256 amount);
@@ -37,17 +26,18 @@ contract StanbicXLiquidStaking is ERC20, Ownable, ReentrancyGuard {
 
     constructor(
         address _sxtToken,
+        address _rewardToken,
         uint256 _rewardRate
-    ) ERC20("Staked Stanbic-X Token", "stSXT") {
-        sxtToken = ISXToken(_sxtToken);
-        rewardRate = _rewardRate; // e.g., rewards per second
+    ) ERC20("Staked SXT", "stSXT") {
+        sxtToken = IERC20(_sxtToken);
+        rewardToken = IERC20(_rewardToken);
+        rewardRate = _rewardRate;
         lastUpdateTime = block.timestamp;
     }
 
     modifier updateReward(address account) {
         rewardPerTokenStored = rewardPerToken();
         lastUpdateTime = block.timestamp;
-
         if (account != address(0)) {
             rewards[account] = earned(account);
             userRewardPerTokenPaid[account] = rewardPerTokenStored;
@@ -55,7 +45,6 @@ contract StanbicXLiquidStaking is ERC20, Ownable, ReentrancyGuard {
         _;
     }
 
-    // Calculate reward per token based on time elapsed
     function rewardPerToken() public view returns (uint256) {
         if (totalSupply() == 0) {
             return rewardPerTokenStored;
@@ -66,7 +55,6 @@ contract StanbicXLiquidStaking is ERC20, Ownable, ReentrancyGuard {
                 totalSupply());
     }
 
-    // Calculate earned rewards for an account
     function earned(address account) public view returns (uint256) {
         return
             ((balanceOf(account) *
@@ -74,53 +62,75 @@ contract StanbicXLiquidStaking is ERC20, Ownable, ReentrancyGuard {
             rewards[account];
     }
 
-    // Stake SXT tokens and mint stSXT 1:1
     function stake(
         uint256 amount
     ) external nonReentrant updateReward(msg.sender) {
-        require(amount > 0, "Cannot stake 0");
+        require(amount > 0, "Cannot stake zero");
         require(
             sxtToken.transferFrom(msg.sender, address(this), amount),
             "Transfer failed"
         );
 
-        _mint(msg.sender, amount);
-        totalStaked += amount;
+        uint256 stSXTToMint;
+        if (totalSupply() == 0 || totalSXTStaked == 0) {
+            stSXTToMint = amount;
+        } else {
+            stSXTToMint = (amount * totalSupply()) / totalSXTStaked;
+        }
 
+        _mint(msg.sender, stSXTToMint);
+        totalSXTStaked += amount;
         emit Staked(msg.sender, amount);
     }
 
-    // Unstake stSXT tokens and redeem original SXT + rewards
     function unstake(
-        uint256 amount
+        uint256 stSXTAmount
     ) external nonReentrant updateReward(msg.sender) {
-        require(amount > 0, "Cannot unstake 0");
-        require(balanceOf(msg.sender) >= amount, "Insufficient stSXT balance");
+        require(stSXTAmount > 0, "Cannot unstake zero");
+        require(balanceOf(msg.sender) >= stSXTAmount, "Insufficient stSXT");
 
-        _burn(msg.sender, amount);
-        totalStaked -= amount;
+        uint256 sxtAmount = (stSXTAmount * totalSXTStaked) / totalSupply();
 
-        require(sxtToken.transfer(msg.sender, amount), "Transfer failed");
+        _burn(msg.sender, stSXTAmount);
+        totalSXTStaked -= sxtAmount;
 
+        // Claim rewards
         uint256 reward = rewards[msg.sender];
         if (reward > 0) {
             rewards[msg.sender] = 0;
-            // Reward distribution logic here (e.g., transfer reward tokens)
-            // For simplicity, assuming rewards are paid in SXT:
             require(
-                sxtToken.transfer(msg.sender, reward),
+                rewardToken.transfer(msg.sender, reward),
                 "Reward transfer failed"
             );
             emit RewardPaid(msg.sender, reward);
         }
 
-        emit Unstaked(msg.sender, amount);
+        require(sxtToken.transfer(msg.sender, sxtAmount), "Transfer failed");
+        emit Unstaked(msg.sender, stSXTAmount);
     }
 
-    // Admin can update reward rate
-    function setRewardRate(uint256 newRate) external onlyOwner {
+    function claimRewards() external nonReentrant updateReward(msg.sender) {
+        uint256 reward = rewards[msg.sender];
+        if (reward > 0) {
+            rewards[msg.sender] = 0;
+            require(
+                rewardToken.transfer(msg.sender, reward),
+                "Reward transfer failed"
+            );
+            emit RewardPaid(msg.sender, reward);
+        }
+    }
+
+    // Admin function to update reward rate
+    function setRewardRate(uint256 newRate) external {
         rewardPerTokenStored = rewardPerToken();
         lastUpdateTime = block.timestamp;
         rewardRate = newRate;
+    }
+
+    // Exchange rate: how much SXT each stSXT token is worth
+    function exchangeRate() external view returns (uint256) {
+        if (totalSupply() == 0) return 1e18;
+        return (totalSXTStaked * 1e18) / totalSupply();
     }
 }
